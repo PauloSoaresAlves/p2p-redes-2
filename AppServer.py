@@ -1,40 +1,55 @@
 import socket
+import threading
+import json
 
-# Dicionário para armazenar informações dos clientes
-client_info = {}
+# Dicionário para armazenar informações dos clientees
+cliente_info = {}
 
-def register_client(client_socket, client_address):
-    client_info[client_address] = []
-    print("Novo cliente registrado:", client_address)
+def registrar_cliente(socket_cliente, endereco_cliente):
+    cliente_info[endereco_cliente] = []
+    print("Novo cliente registrado:", endereco_cliente)
 
-def unregister_client(client_socket, client_address):
-    if client_address in client_info:
-        del client_info[client_address]
-        print("Cliente removido:", client_address)
+def remover_cliente(socket_cliente, endereco_cliente):
+    if endereco_cliente in cliente_info:
+        del cliente_info[endereco_cliente]
+        print("cliente removido:", endereco_cliente)
 
-def handle_client_request(client_socket, client_address):
+def handle_cliente_request(socket_cliente, endereco_cliente):
     while True:
-        request = client_socket.recv(1024).decode()
-        if request == "QUIT":
-            unregister_client(client_socket, client_address)
-            client_socket.send("Conexão encerrada.".encode())
-            client_socket.close()
+        request = socket_cliente.recv(1024).decode().split("|")
+        if request[0] == "3":
+            remover_cliente(socket_cliente, endereco_cliente)
+            socket_cliente.send("Conexão encerrada.".encode())
+            socket_cliente.close()
             break
-        elif request == "LIST":
-            client_socket.send(str(client_info).encode())
+        elif request[0] == "1":
+            socket_cliente.send(str(cliente_info).encode())
+# parte que atualiza o dicionário de músicas, não sei se funciona
+        elif request[0] == "2":
+            json_message = json.loads(request[1:])
+            lista_musicas = json_message["data"]
+            adicionar_conteudo_cliente(endereco_cliente, lista_musicas)
 
+# atualiza a lista das músicas adicionando as novas músicas fornecidas pelo cliente
+def adicionar_conteudo_cliente(endereco_cliente, lista_musicas):
+    cliente_info[endereco_cliente].extend(lista_musicas)
+    print(cliente_info)
+            
 def start_server():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('localhost', 5445))
-    server_socket.listen(5)
+    socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    socket_servidor.bind(('localhost', 5445))
+    socket_servidor.listen(5)
 
     print("Servidor iniciado. Aguardando conexões...")
 
     while True:
-        client_socket, client_address = server_socket.accept()
-        register_client(client_socket, client_address)
-        client_socket.send("Registro bem-sucedido.".encode())
-        handle_client_request(client_socket, client_address)
+        socket_cliente, endereco_cliente = socket_servidor.accept()
+        registrar_cliente(socket_cliente, endereco_cliente)
+        socket_cliente.send("Registro bem-sucedido.".encode())
+        # Criar uma nova thread para lidar com a conexão do cliente
+        thread_cliente = threading.Thread(target=handle_cliente_request, args=(socket_cliente, endereco_cliente))
+        thread_cliente.daemon = True
+        thread_cliente.start()
 
 if __name__ == '__main__':
     start_server()
