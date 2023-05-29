@@ -1,70 +1,52 @@
+#TCP Socket Client
 import socket
-import threading
+import glob
 import json
+import os
 
-# Dicionário para armazenar informações dos clientees
-cliente_info = {}
+def conectar_servidor(server_end):
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.connect(server_end)
+    response = server_socket.recv(1024).decode()
+    if(response):
+        print(response)
+        paths = glob.glob("./shared/*.txt")
+        files = list(map(os.path.basename,paths))
+        server_socket.send(("1|"+json.dumps({'data':files})).encode())
 
-def registrar_cliente(endereco_cliente):
-    if endereco_cliente not in cliente_info:
-        cliente_info[endereco_cliente] = []
-        print("Novo cliente registrado:", endereco_cliente)
-        return True
-    else:
-        print("Cliente já existe!")
-        return False
+    return server_socket
 
-def remover_cliente(socket_cliente,endereco_cliente):
-    if endereco_cliente in cliente_info:
-        socket_cliente.send("Desconectado".encode())
-        del cliente_info[endereco_cliente]
-        print("cliente removido:", endereco_cliente)
-        
+def desconectar_servidor(server_socket):
+    server_socket.send("2|".encode())
+    response = server_socket.recv(1024).decode()
+    print(response)
+    server_socket.close()
 
-def handle_cliente_request(socket_cliente, endereco_cliente):
-    while True:
-        try:
-            request = socket_cliente.recv(1024).decode().split("|")
-            if request[0] == "2":
-                remover_cliente(socket_cliente,endereco_cliente)
-                socket_cliente.send("Conexão encerrada.".encode())
-                socket_cliente.close()
-                break
-            elif request[0] == "3":
-                socket_cliente.send(str(cliente_info).encode())
-            elif request[0] == "1":
-                json_message = json.loads(request[1])
-                lista_musicas = json_message["data"]
-                adicionar_conteudo_cliente(endereco_cliente, lista_musicas)
-        except:
-            del cliente_info[endereco_cliente]
-            print(f"Cliente removido por erro na conexão: {endereco_cliente}")
-            break
-
-# atualiza a lista das músicas adicionando as novas músicas fornecidas pelo cliente
-def adicionar_conteudo_cliente(endereco_cliente, lista_musicas):
-    cliente_info[endereco_cliente].extend(lista_musicas)
-    print("Tabela de Clientes:")
-    print(cliente_info)
-            
-def start_server():
-    socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    socket_servidor.bind(('localhost', 5445))
-    socket_servidor.listen(5)
-
-    print("Servidor iniciado. Aguardando conexões...")
-
-    while True:
-        socket_cliente, endereco_cliente = socket_servidor.accept()
-        success = registrar_cliente(endereco_cliente)
-        if(success):
-            socket_cliente.send("Registro bem-sucedido.".encode())
-            # Criar uma nova thread para lidar com a conexão do cliente
-            thread_cliente = threading.Thread(target=handle_cliente_request, args=(socket_cliente, endereco_cliente))
-            thread_cliente.daemon = True
-            thread_cliente.start()
-        else:
-            socket.close()
+def requerer_lista_arquivos(server_socket):
+    server_socket.send("3|".encode())
+    response = server_socket.recv(1024).decode()
+    print("Lista de clientes conectados e seus arquivos:\n", response)
 
 if __name__ == '__main__':
-    start_server()
+    server_end = ('localhost', 5445)
+    server_socket = conectar_servidor(server_end)
+
+    while True:
+        print("Selecione uma das seguintes opções:")
+        print("1 - Listar arquivos disponíveis")
+        print("2 - Desconectar do servidor")
+        user_input = input()
+        if (user_input == "1"):
+            requerer_lista_arquivos(server_socket)
+        elif (user_input == "2"):
+            desconectar_servidor(server_socket)
+            break
+        else:
+            print("Opção selecionada não é valida!")
+
+
+
+#1 - Connect
+#2 - Disconnect
+#3 - List
+#4 - Add
