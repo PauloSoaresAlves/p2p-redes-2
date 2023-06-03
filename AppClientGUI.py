@@ -8,7 +8,7 @@ import PySimpleGUI as sg
 def conectar_servidor(server_end):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.connect(server_end)
-    response = server_socket.recv(1024).decode()
+    response = server_socket.recv(1024).decode('utf-8')
     if(response):
         paths = glob.glob("./shared/*.txt")
         files = list(map(os.path.basename,paths))
@@ -27,7 +27,7 @@ def conectar_servidor(server_end):
 
 def desconectar_servidor(server_socket):
     server_socket.send("2|".encode())
-    response = server_socket.recv(1024).decode()
+    response = server_socket.recv(1024).decode('utf-8')
     server_socket.close()
     layout = [[sg.Text(response)],[sg.Button("Fechar")]]
 
@@ -40,11 +40,41 @@ def desconectar_servidor(server_socket):
                 
             desconectado.close()
 
-def requerer_lista_arquivos(server_socket):
+def requerer_lista_arquivos(server_socket: socket.socket):
     server_socket.send("3|".encode())
-    response = server_socket.recv(1024).decode()
-    layout = [[sg.Text("Lista de clientes conectados e seus arquivos:\n" +  response)],[sg.Button("Fechar")]]
-    arquivos = sg.Window("Arquivos",layout)
+    response = server_socket.recv(1024).decode('utf-8')
+
+    clients = json.loads(response)
+    
+    #Inicia a GUI de lista de arquivos
+    table = []
+    toprow = ['Nó', 'Arquivo']
+
+    for client in clients:
+        for file in client[1]:
+            table.append([client[0],file])
+
+    def firstElem(elem):
+        return elem[0]
+    
+    table.sort(key=firstElem)
+   
+    tbl = sg.Table(values=table, headings=toprow,
+        auto_size_columns=True,
+        display_row_numbers=False,
+        justification='center', key='-TABLE-',
+        selected_row_colors='red on yellow',
+        enable_events=True,
+        expand_x=True,
+        expand_y=True,
+        enable_click_events=True)
+
+    layout = [[sg.Text("Lista de clientes conectados e seus arquivos:")],
+               [tbl],
+              [sg.Button("Fechar")]]
+    arquivos = sg.Window("Arquivos",layout,size=(750, 300), element_justification='c')
+
+    #Roda a GUI de Lista de Arquivos
     while True:
         eventos , valores = arquivos.read()
         if eventos == sg.WIN_CLOSED:
@@ -53,29 +83,59 @@ def requerer_lista_arquivos(server_socket):
             arquivos.close()
 
 if __name__ == '__main__':
-    server_end = ('localhost', 5445)
-    server_socket = conectar_servidor(server_end)
+
+    #Layout Inicial da GUI
+    layout = [[sg.VPush()],
+              [sg.Text("Insira o IP e a Porta do Servidor no formato IP:PORTA")],
+            [sg.Input('', enable_events=True, key='-INPUT-', font=('Arial Bold', 20), expand_x=True, justification='left')],
+            [sg.Text("", key="error_text", text_color="#FF6600")],
+            [sg.Button('Ok', key='-OK-', font=('Arial Bold', 20)),
+            sg.Button('Exit', font=('Arial Bold', 20))],
+            [sg.VPush()]]
+    
+    #inicia a GUI de conexão ao server
+    window = sg.Window('Server Connection', layout, size=(750, 300), element_justification='c')
+    error_text = window["error_text"]
+    
+    #Roda a GUI de conexão ao server
+    server_socket = None
+    while server_socket == None:
+        event, values = window.read()
+        ip,port = ["",""]
+        if event == '-OK-':
+            try:  
+                ip,port = values["-INPUT-"].split(":")
+                server_end = (ip, int(port))
+                server_socket = conectar_servidor(server_end)
+                window.close()
+            except ValueError:
+                error_text.update(f"Erro: IP ou porta do servidor são invalidos!")
+            except:
+                error_text.update(f"Erro: não foi possível se conectar a {ip}:{port}!")
+        elif event == sg.WIN_CLOSED or event == 'Exit':
+            window.close()
+            break
+     
     conectado = True
+    if server_socket != None:
 
-    while conectado:
-        layout = [[sg.Text("Escolha uma das opções")],[sg.Button("Listar arquivos disponíveis")],[sg.Button("Desconectar do servidor")]]
-
-        inicio = sg.Window('Escolha do cliente',layout,size=(250, 100))
-        while True:
-            eventos , valores = inicio.read()
+        #Roda a GUI de Opções do cliente
+        while conectado:
+            layout = [[sg.Text("Escolha uma das opções")],
+                      [sg.VPush()],
+                      [sg.Button("Listar arquivos disponíveis")],
+                      [sg.Button("Desconectar do servidor")],
+                      [sg.VPush()]]
+            window = sg.Window("Choose Action", layout,size=(750, 300), element_justification='c')
+            eventos , valores = window.read()
             if eventos == sg.WIN_CLOSED:
+                desconectar_servidor(server_socket)
                 break
             elif eventos == "Listar arquivos disponíveis":
-                inicio.close()
+                window.close()
                 requerer_lista_arquivos(server_socket)
             elif eventos == "Desconectar do servidor":
-                inicio.close()
+                window.close()
                 desconectar_servidor(server_socket)
                 conectado = False
-            
-
-
-#1 - Connect
-#2 - Disconnect
-#3 - List
-#4 - Add
+        
