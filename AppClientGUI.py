@@ -5,14 +5,19 @@ import json
 import os
 import PySimpleGUI as sg
 
+
 def conectar_servidor(server_end):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.connect(server_end)
     response = server_socket.recv(1024).decode('utf-8')
     if(response):
-        paths = glob.glob("./shared/*.txt")
-        files = list(map(os.path.basename,paths))
-        server_socket.send(("1|"+json.dumps({'data':files})).encode())
+        types = ('./shared/*.mp3', './shared/*.wav', './shared/*.ogg')
+        musicfiles = []
+        for files in types:
+            for file in glob.glob(files):
+                musicfiles.append(os.path.basename(file))
+
+        server_socket.send(("1|"+json.dumps({'data':musicfiles})).encode())
 
         layout = [[sg.Text(response)],[sg.Button("Continuar")]]
         conectou = sg.Window('Conectado com Servidor',layout,size=(180, 80))
@@ -83,6 +88,11 @@ def requerer_lista_arquivos(server_socket: socket.socket):
             arquivos.close()
 
 if __name__ == '__main__':
+
+    try:
+        os.mkdir("./shared")
+    except:
+        pass
 
     #Layout Inicial da GUI
     layout = [[sg.VPush()],
