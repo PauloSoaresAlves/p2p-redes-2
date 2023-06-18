@@ -1,9 +1,19 @@
 #TCP Socket Client
+import io
+import queue
 import socket
 import glob
 import json
 import os
+import threading
+import time
 import PySimpleGUI as sg
+import pyaudio
+import subprocess
+import numpy as np
+import soundfile as sf
+import wave
+from pydub import AudioSegment
 
 
 def conectar_servidor(server_end):
@@ -45,7 +55,7 @@ def desconectar_servidor(server_socket):
                 
             desconectado.close()
 
-def requerer_lista_arquivos(server_socket: socket.socket):
+def requerer_lista_arquivos(server_socket: socket.socket, listener_port: str):
     server_socket.send("3|".encode())
     response = server_socket.recv(1024).decode('utf-8')
 
@@ -86,9 +96,61 @@ def requerer_lista_arquivos(server_socket: socket.socket):
             break
         elif eventos == "Fechar":
             arquivos.close()
+        elif eventos == "-TABLE-":
+            requerer_arquivo(table[valores['-TABLE-'][0]],listener_port)
+            sg.popup(f"Now playing: {table[valores['-TABLE-'][0]][1]}")
 
-if __name__ == '__main__':
+def requerer_arquivo(row: list, listener_port: str):
+    message = f"{listener_port}|{row[1]}"
+    server_end = (row[0][0], row[0][1])
+    client_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_server.sendto(message.encode(), server_end)
 
+                        
+def recieve_audio(my_address, my_port):
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_socket.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,65536)
+    client_socket.bind((my_address, my_port))
+    pa = pyaudio.PyAudio()
+    CHUNK = 65536
+    q = queue.Queue()
+    stream = pa.open(format=pyaudio.paInt16,
+                channels=2,
+                rate=48000,
+                output=True)
+    while True:
+        data, addr = (client_socket.recvfrom(CHUNK))
+        if not data:
+            break
+        if (q.qsize() > 25):
+            stream.write(q.get())
+        print(data)
+        q.put(data)
+        
+
+def listen_client(my_address, my_port):
+    client_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_server.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,65536)
+    client_server.bind((my_address, my_port))
+    while True:
+        data, addr = client_server.recvfrom(1024)
+        reciever_port, filename = data.decode().split("|")
+        mp3_data = open(f"./shared/{filename}", 'rb').read()
+        audio_segment = AudioSegment.from_mp3(io.BytesIO(mp3_data))
+        wav_data = audio_segment.export(format='wav').read()
+        wv = wave.open(io.BytesIO(wav_data), 'rb')
+        chunk_size = 1024
+        sample_rate = wv.getframerate()
+        print(sample_rate)
+        print(wv.getnchannels())
+        print(wv.getsampwidth())
+        while True:
+            chunk= wv.readframes(chunk_size)
+            client_server.sendto(chunk,(addr[0], int(reciever_port)))
+            time.sleep(0.8*chunk_size/sample_rate)
+        
+
+def start_client():
     try:
         os.mkdir("./shared")
     except:
@@ -112,11 +174,20 @@ if __name__ == '__main__':
     while server_socket == None:
         event, values = window.read()
         ip,port = ["",""]
+        listener_port = ""
         if event == '-OK-':
             try:  
                 ip,port = values["-INPUT-"].split(":")
                 server_end = (ip, int(port))
                 server_socket = conectar_servidor(server_end)
+                my_address=server_socket.getsockname()
+                listener_port = str(my_address[1])[1:]
+                client_listener_thread = threading.Thread(target=listen_client, args=(my_address[0], my_address[1]))
+                client_listener_thread.daemon = True
+                client_listener_thread.start()
+                client_reciever_thread = threading.Thread(target=recieve_audio, args=(my_address[0], int(listener_port)))
+                client_reciever_thread.daemon = True
+                client_reciever_thread.start()
                 window.close()
             except ValueError:
                 error_text.update(f"Erro: IP ou porta do servidor são invalidos!")
@@ -143,9 +214,12 @@ if __name__ == '__main__':
                 break
             elif eventos == "Listar arquivos disponíveis":
                 window.close()
-                requerer_lista_arquivos(server_socket)
+                requerer_lista_arquivos(server_socket,listener_port)
             elif eventos == "Desconectar do servidor":
                 window.close()
                 desconectar_servidor(server_socket)
                 conectado = False
+
+if __name__ == '__main__':
+    start_client()
         
