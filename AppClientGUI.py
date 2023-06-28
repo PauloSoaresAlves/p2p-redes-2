@@ -176,6 +176,7 @@ def start_client():
     dir = os.listdir("./")
     if "shared_1" not in dir:
         client_instance = client_persist(1) 
+        os.mkdir(f"./shared_{client_instance.id}")
     else:
         client_instance = client_persist(int(dir[-1].split("_")[1]))
     try:
