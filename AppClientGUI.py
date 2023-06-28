@@ -9,19 +9,23 @@ import threading
 import time
 import PySimpleGUI as sg
 import pyaudio
-import subprocess
-import numpy as np
 import soundfile as sf
 import wave
 from pydub import AudioSegment
 
+class client_persist():
+    def __init__(self,id):
+        self.id = id
+        self.paused = False
+        self.lock = threading.Lock()
+        self.song = ""
 
-def conectar_servidor(server_end):
+def conectar_servidor(server_end,client_instance: client_persist):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.connect(server_end)
     response = server_socket.recv(1024).decode('utf-8')
     if(response):
-        types = ('./shared/*.mp3', './shared/*.wav', './shared/*.ogg')
+        types = (f'./shared_{client_instance.id}/*.mp3', f'./shared_{client_instance.id}/*.wav', f'./shared_{client_instance.id}/*.ogg')
         musicfiles = []
         for files in types:
             for file in glob.glob(files):
@@ -107,7 +111,7 @@ def requerer_arquivo(row: list, listener_port: str):
     client_server.sendto(message.encode(), server_end)
 
                         
-def recieve_audio(my_address, my_port):
+def recieve_audio(my_address, my_port,client_instance: client_persist):
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client_socket.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,65536)
     client_socket.bind((my_address, my_port))
@@ -119,40 +123,63 @@ def recieve_audio(my_address, my_port):
                 rate=48000,
                 output=True)
     while True:
-        data, addr = (client_socket.recvfrom(CHUNK))
-        if not data:
-            break
-        if (q.qsize() > 25):
-            stream.write(q.get())
-        print(data)
-        q.put(data)
+        data, addr = (client_socket.recvfrom(1024))
+        decoded_data = data.decode()
+        if decoded_data == "O arquivo requisitado não está mais presente":
+            sg.popup(decoded_data)
+            continue
+        else:
+            song_config = json.loads(decoded_data)
+            stream = pa.open(format=pyaudio.paInt16,
+                channels=song_config['channels'],
+                rate=song_config['sample_rate'],
+                output=True)
+            while True:
+                data, addr = (client_socket.recvfrom(CHUNK))
+                if not data:
+                    break
+                if (q.qsize() > 25):
+                    stream.write(q.get())
+                q.put(data)
         
 
-def listen_client(my_address, my_port):
+def listen_client(my_address, my_port,client_instance: client_persist):
     client_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client_server.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,65536)
     client_server.bind((my_address, my_port))
     while True:
         data, addr = client_server.recvfrom(1024)
         reciever_port, filename = data.decode().split("|")
-        mp3_data = open(f"./shared/{filename}", 'rb').read()
-        audio_segment = AudioSegment.from_mp3(io.BytesIO(mp3_data))
-        wav_data = audio_segment.export(format='wav').read()
-        wv = wave.open(io.BytesIO(wav_data), 'rb')
-        chunk_size = 1024
-        sample_rate = wv.getframerate()
-        print(sample_rate)
-        print(wv.getnchannels())
-        print(wv.getsampwidth())
-        while True:
-            chunk= wv.readframes(chunk_size)
-            client_server.sendto(chunk,(addr[0], int(reciever_port)))
-            time.sleep(0.8*chunk_size/sample_rate)
+        if filename not in os.listdir(f'./shared_{client_instance.id}'):
+            client_server.sendto("O arquivo requisitado não está mais presente".encode(),(addr[0], int(reciever_port)))
+            continue
+        else:
+            if filename.endswith(".mp3"):
+                mp3_data = open(f"./shared_{client_instance.id}/{filename}", 'rb').read()
+                audio_segment = AudioSegment.from_mp3(io.BytesIO(mp3_data))
+                wav_data = audio_segment.export(format='wav').read()
+            else:
+                wav_data = open(f"./shared_{client_instance.id}/{filename}", 'rb').read()
+            wv = wave.open(io.BytesIO(wav_data), 'rb')
+            chunk_size = 1024
+            sample_rate = wv.getframerate()
+            channels = wv.getnchannels()
+            client_server.sendto(json.dumps({'channels':channels,'sample_rate':sample_rate}).encode(),(addr[0], int(reciever_port)))
+            while True:
+                chunk= wv.readframes(chunk_size)
+                client_server.sendto(chunk,(addr[0], int(reciever_port)))
+                time.sleep(0.7*chunk_size/sample_rate)
         
 
 def start_client():
+    #Cria a pasta de arquivos compartilhados
+    dir = os.listdir("./")
+    if "shared_1" not in dir:
+        client_instance = client_persist(1) 
+    else:
+        client_instance = client_persist(int(dir[-1].split("_")[1]))
     try:
-        os.mkdir("./shared")
+        os.mkdir(f"./shared_{client_instance.id+1}")
     except:
         pass
 
@@ -179,13 +206,13 @@ def start_client():
             try:  
                 ip,port = values["-INPUT-"].split(":")
                 server_end = (ip, int(port))
-                server_socket = conectar_servidor(server_end)
+                server_socket = conectar_servidor(server_end, client_instance)
                 my_address=server_socket.getsockname()
                 listener_port = str(my_address[1])[1:]
-                client_listener_thread = threading.Thread(target=listen_client, args=(my_address[0], my_address[1]))
+                client_listener_thread = threading.Thread(target=listen_client, args=(my_address[0], my_address[1],client_instance))
                 client_listener_thread.daemon = True
                 client_listener_thread.start()
-                client_reciever_thread = threading.Thread(target=recieve_audio, args=(my_address[0], int(listener_port)))
+                client_reciever_thread = threading.Thread(target=recieve_audio, args=(my_address[0], int(listener_port),client_instance))
                 client_reciever_thread.daemon = True
                 client_reciever_thread.start()
                 window.close()
