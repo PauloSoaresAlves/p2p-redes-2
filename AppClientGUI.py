@@ -9,7 +9,6 @@ import threading
 import time
 import PySimpleGUI as sg
 import pyaudio
-import soundfile as sf
 import wave
 from pydub import AudioSegment
 
@@ -21,6 +20,7 @@ class client_persist():
         self.song = ""
         self.notPlaying = False
         self.streaming = True
+        self.canPlay = True
 
 def conectar_servidor(server_end,client_instance: client_persist):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -122,6 +122,9 @@ def requerer_lista_arquivos(server_socket: socket.socket, listener_port: str, cl
 def requerer_arquivo(row: list, listener_port: str, client_instance: client_persist):
     if client_instance.notPlaying == False:
         client_instance.notPlaying = True
+    while not client_instance.canPlay:
+        time.sleep(1)
+    client_instance.canPlay = False
     message = f"{listener_port}|{row[1]}"
     server_end = (row[0][0], row[0][1])
     client_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -140,6 +143,7 @@ def recieve_audio(my_address, my_port,client_instance: client_persist):
         decoded_data = data.decode()
         if decoded_data == "Stop Streaming":
             client_instance.streaming = False
+            client_socket.sendto("Done".encode(),addr)
         elif decoded_data == "O arquivo requisitado não está mais presente":
             sg.popup(decoded_data)
             continue
@@ -157,7 +161,17 @@ def recieve_audio(my_address, my_port,client_instance: client_persist):
                     break
                 if client_instance.notPlaying == True:
                     client_socket.sendto("Stop Streaming".encode(),(addr[0],int(song_config["sender_port"])))
-                    time.sleep(1)
+                    while True:
+                        try:
+                            data, addr = (client_socket.recvfrom(CHUNK))
+                            if data.decode() == "Done":
+                                time.sleep(5)
+                                with q.mutex:
+                                    q.queue.clear()
+                                client_instance.canPlay = True
+                                break
+                        except:
+                            pass
                     break
                 if (q.qsize() > 25 and client_instance.paused == False):
                     stream.write(q.get())
